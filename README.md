@@ -1,90 +1,169 @@
+# RAG Pipeline with LangChain
 
-# Retrieval-Augmented Generation (RAG) pipeline using LangChain, OpenAI, and Chroma
+> A complete, runnable Retrieval-Augmented Generation pipeline from scratch — document loading through grounded answer generation, using LangChain, OpenAI, and ChromaDB.
 
-## Introduction
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
+[![LangChain](https://img.shields.io/badge/LangChain-RAG-1C3C3C)](https://langchain.com)
+[![OpenAI](https://img.shields.io/badge/OpenAI-Embeddings_+_Chat-412991?logo=openai)](https://openai.com)
+[![ChromaDB](https://img.shields.io/badge/ChromaDB-vector--store-orange)](https://www.trychroma.com/)
 
-This notebook demonstrates how to build a Retrieval-Augmented Generation (RAG) pipeline step by step using LangChain, OpenAI embeddings, and ChromaDB.
+---
 
-In simple terms:
+## What This Is
 
-Imagine you want to ask questions about a website or document, but instead of manually reading it all, you let AI find the answers for you.
+A clean, step-by-step implementation of a RAG pipeline — the kind of system that's at the core of most production LLM applications. No abstractions hiding the important parts. Each stage is its own module so you can see exactly what's happening and where to plug in alternatives.
 
-The AI (LLM) doesn’t just guess — it first retrieves the most relevant parts of the document and then uses those pieces to generate accurate answers.
+If you're learning RAG or evaluating LangChain for a project, this is a working reference implementation.
 
-This makes the model more reliable and context-aware, especially when working with private or domain-specific data.
+---
 
-## How It Works (Workflow)
+## The Pipeline
 
-### Load the Data
+```
+1. Load
+   └── Documents from file/directory (PDF, TXT, web)
+       LangChain DocumentLoaders
 
-We fetch content from a webpage (Educosys GenAI course page in this demo).
+2. Chunk
+   └── Split into overlapping text chunks
+       RecursiveCharacterTextSplitter
+       chunk_size=1000, chunk_overlap=200
 
-The raw text becomes our knowledge source.
+3. Embed
+   └── Convert chunks to dense vectors
+       OpenAI text-embedding-ada-002
 
-## Split into Chunks
+4. Store
+   └── Persist vectors + metadata
+       ChromaDB (local persistent collection)
 
-Long text is broken down into smaller, overlapping chunks.
+5. Retrieve
+   └── At query time: embed query → similarity search → top-k chunks
+       ChromaDB similarity_search(query, k=4)
 
-This helps the AI process information without losing context.
+6. Generate
+   └── Prompt: [system instructions] + [retrieved context] + [user question]
+       OpenAI GPT-3.5-turbo / GPT-4
+       Answer is grounded in retrieved documents
+```
 
-## Create Embeddings
+---
 
-Each text chunk is converted into a vector (numerical representation) using OpenAI embeddings.
+## Why Each Decision Was Made
 
-Think of it as turning words into coordinates on a map.
+**RecursiveCharacterTextSplitter with overlap:** Splitting at 1000 chars with 200-char overlap preserves sentence context at chunk boundaries. Pure fixed-size splitting without overlap loses context when a sentence straddles two chunks.
 
-## Store in Vector Database (ChromaDB)
+**text-embedding-ada-002:** The standard choice for production RAG — strong semantic quality, low cost, 1536 dimensions. Swap to `text-embedding-3-small` for higher throughput at slightly lower quality.
 
-All embeddings are stored in a vector database.
+**ChromaDB:** Runs fully local with no infrastructure. For production scale, swap the vector store to Pinecone, Weaviate, or MongoDB Atlas — the LangChain VectorStore interface makes this a one-line change.
 
-This allows fast similarity search when we ask questions later.
+**Retrieval before generation:** The core RAG insight — instead of fine-tuning a model on your data (expensive, stale), keep documents in a retrieval index and inject relevant context at inference time. The model stays generic; the knowledge is in the store.
 
-## Retrieve Relevant Chunks
+---
 
-When a user asks a question, the system searches the database for the most relevant text chunks.
+## Tech Stack
 
-Only the most useful context is passed to the AI model.
+| Stage | Technology |
+|-------|-----------|
+| Document loading | LangChain DocumentLoaders |
+| Chunking | LangChain RecursiveCharacterTextSplitter |
+| Embeddings | OpenAI text-embedding-ada-002 |
+| Vector store | ChromaDB |
+| LLM | OpenAI GPT-3.5-turbo / GPT-4 |
+| Framework | LangChain (LCEL chain) |
+| Language | Python 3.11 |
 
+---
 
-# Generate Answer with LLM
+## Setup
 
-The retrieved context + user question is combined into a prompt.
+```bash
+git clone https://github.com/jibz33on/rag-pipeline-langchain
+cd rag-pipeline-langchain
 
-The AI model (OpenAI Chat) then generates an answer grounded in the provided data.
+python -m venv venv
+source venv/bin/activate
 
-      ┌─────────────────────┐
-      │   Web / Documents   │   ← Source data (e.g., webpage, PDF, etc.)
-      └─────────┬───────────┘
-                │
-                ▼
-      ┌─────────────────────┐
-      │   Split into Chunks │   ← Break text into smaller pieces
-      └─────────┬───────────┘
-                │
-                ▼
-      ┌─────────────────────┐
-      │   Create Embeddings │   ← Convert text → numerical vectors
-      │   (OpenAI model)    │
-      └─────────┬───────────┘
-                │
-                ▼
-      ┌─────────────────────┐
-      │   Vector Database   │   ← Store embeddings (ChromaDB)
-      │   (Searchable)      │
-      └─────────┬───────────┘
-                │
-                ▼
-      ┌─────────────────────┐
-      │     Retriever       │   ← Find most relevant chunks for a query
-      └─────────┬───────────┘
-                │
-                ▼
-      ┌─────────────────────┐
-      │   Prompt + Context  │   ← Combine user’s question + retrieved text
-      └─────────┬───────────┘
-                │
-                ▼
-      ┌─────────────────────┐
-      │   LLM (OpenAI Chat) │   ← Generates grounded, contextual answer
-      └─────────────────────┘
+pip install -r requirements.txt
+```
 
+```bash
+cp .env.example .env
+# Add your OPENAI_API_KEY
+```
+
+---
+
+## Usage
+
+### Ingest documents
+
+```python
+from pipeline.ingest import ingest_documents
+
+ingest_documents(
+    source_dir="./docs",
+    collection_name="my_docs"
+)
+# Loads, chunks, embeds, and stores to ChromaDB
+```
+
+### Query
+
+```python
+from pipeline.query import ask
+
+answer = ask(
+    question="What are the main themes in this document?",
+    collection_name="my_docs"
+)
+print(answer)
+```
+
+### Full pipeline in one script
+
+```bash
+python run_pipeline.py \
+  --docs ./docs \
+  --question "Summarize the key points about X"
+```
+
+---
+
+## Project Structure
+
+```
+rag-pipeline-langchain/
+├── pipeline/
+│   ├── ingest.py       # Load → chunk → embed → store
+│   └── query.py        # Retrieve → prompt → generate
+├── docs/               # Drop your source documents here
+├── chroma_db/          # Persisted vector store (auto-created)
+├── run_pipeline.py     # CLI entry point
+├── .env.example
+└── requirements.txt
+```
+
+---
+
+## Extending This
+
+**Swap the vector store:**
+```python
+# ChromaDB → Pinecone
+from langchain.vectorstores import Pinecone
+vectorstore = Pinecone.from_documents(docs, embeddings, index_name="my-index")
+```
+
+**Add reranking:**
+After retrieval, add a cross-encoder reranker (e.g., `cross-encoder/ms-marco-MiniLM-L-6-v2`) to reorder the top-k before passing to the LLM. Measurably improves answer quality on longer document sets.
+
+**Add evaluation:**
+Drop in RAGAS to measure faithfulness, answer relevancy, and context precision against a test set.
+
+---
+
+## Author
+
+**Jibin Kunjumon** — AI Engineer  
+[GitHub](https://github.com/jibz33on) · [LinkedIn](https://linkedin.com/in/jibin-kunjumon)
